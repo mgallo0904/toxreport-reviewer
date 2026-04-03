@@ -2,25 +2,33 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Send, FileText, Loader2, Bot, User, Trash2, Paperclip, X, ShieldCheck } from 'lucide-react';
 import Markdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { sendToxReviewMessage } from './lib/gemini';
+import { sendToxReviewMessage, uploadFileToGemini } from './lib/gemini';
 
 type Attachment = {
   name: string;
   mimeType: string;
-  data: string;
+  file: File;
+};
+
+type MessageAttachment = {
+  name: string;
+  mimeType: string;
+  uri?: string;
+  inlineData?: string;
 };
 
 type Message = {
   id: string;
   role: 'user' | 'model';
   text: string;
-  attachments?: Attachment[];
+  attachments?: MessageAttachment[];
 };
 
 export default function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+  const [loadingText, setLoadingText] = useState('Reviewing document...');
   const [attachments, setAttachments] = useState<Attachment[]>([]);
   
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -47,18 +55,13 @@ export default function App() {
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files || []);
     
-    files.forEach(file => {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const base64String = (reader.result as string).split(',')[1];
-        setAttachments(prev => [...prev, {
-          name: file.name,
-          mimeType: file.type || 'application/octet-stream',
-          data: base64String
-        }]);
-      };
-      reader.readAsDataURL(file);
-    });
+    const newAttachments = files.map(file => ({
+      name: file.name,
+      mimeType: file.type || 'application/pdf',
+      file: file
+    }));
+    
+    setAttachments(prev => [...prev, ...newAttachments]);
     
     if (fileInputRef.current) {
       fileInputRef.current.value = '';
@@ -82,28 +85,54 @@ export default function App() {
       textareaRef.current.style.height = 'auto';
     }
     
-    const newUserMessage: Message = { 
-      id: Date.now().toString(), 
-      role: 'user', 
-      text: userMessage,
-      attachments: currentAttachments
-    };
-    
-    const updatedMessages = [...messages, newUserMessage];
-    setMessages(updatedMessages);
     setIsLoading(true);
+    setLoadingText(currentAttachments.length > 0 ? 'Uploading files to Gemini (this may take a moment for large PDFs)...' : 'Reviewing...');
 
     try {
+      // Upload files using the Gemini File API (supports up to 2GB)
+      const processedAttachments: MessageAttachment[] = [];
+      for (const att of currentAttachments) {
+        const uploaded = await uploadFileToGemini(att.file, (stateText) => {
+          setLoadingText(stateText);
+        });
+        processedAttachments.push({
+          name: att.name,
+          mimeType: att.mimeType,
+          uri: uploaded.uri
+        });
+      }
+
+      setLoadingText('Analyzing documents...');
+
+      const newUserMessage: Message = { 
+        id: Date.now().toString(), 
+        role: 'user', 
+        text: userMessage,
+        attachments: processedAttachments
+      };
+      
+      const updatedMessages = [...messages, newUserMessage];
+      setMessages(updatedMessages);
+
       const geminiHistory = updatedMessages.map(msg => {
         const parts: any[] = [];
         if (msg.attachments) {
           msg.attachments.forEach(att => {
-            parts.push({
-              inlineData: {
-                mimeType: att.mimeType,
-                data: att.data
-              }
-            });
+            if (att.uri) {
+              parts.push({
+                fileData: {
+                  fileUri: att.uri,
+                  mimeType: att.mimeType
+                }
+              });
+            } else if (att.inlineData) {
+              parts.push({
+                inlineData: {
+                  mimeType: att.mimeType,
+                  data: att.inlineData
+                }
+              });
+            }
           });
         }
         if (msg.text) {
@@ -127,7 +156,7 @@ export default function App() {
       setMessages(prev => [...prev, { 
         id: (Date.now() + 1).toString(), 
         role: 'model', 
-        text: 'An error occurred while processing your request. Please try again. Note: Very large files might exceed the payload limit.' 
+        text: `An error occurred: ${error instanceof Error ? error.message : 'Unknown error'}` 
       }]);
     } finally {
       setIsLoading(false);
@@ -176,8 +205,8 @@ export default function App() {
                   <p className="text-sm text-gray-500">Upload protocol and report files to check for consistency.</p>
                 </div>
                 <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-                  <h3 className="font-medium text-gray-900 mb-1">Data Interpretation</h3>
-                  <p className="text-sm text-gray-500">Verify if conclusions are supported by the presented data.</p>
+                  <h3 className="font-medium text-gray-900 mb-1">Large File Support</h3>
+                  <p className="text-sm text-gray-500">Upload massive PDFs (up to 2GB) using the Gemini File API.</p>
                 </div>
               </div>
             </div>
@@ -235,7 +264,7 @@ export default function App() {
               </div>
               <div className="bg-white border border-gray-200 shadow-sm rounded-2xl rounded-tl-sm px-5 py-4 flex items-center gap-2">
                 <Loader2 className="w-4 h-4 text-blue-600 animate-spin" />
-                <span className="text-sm text-gray-500">Reviewing document...</span>
+                <span className="text-sm text-gray-500">{loadingText}</span>
               </div>
             </div>
           )}
@@ -246,7 +275,7 @@ export default function App() {
         <div className="p-4 bg-white border-t border-gray-200 shrink-0">
           <div className="max-w-4xl mx-auto mb-3 flex items-center justify-center gap-2 text-xs text-gray-600 bg-green-50 text-green-800 py-1.5 px-3 rounded-full w-fit border border-green-100">
             <ShieldCheck className="w-4 h-4 text-green-600" />
-            <span><strong>Secure & Private:</strong> Files are processed locally and sent securely to Google Gemini. They are never stored on any public server.</span>
+            <span><strong>Secure & Private:</strong> Files are sent securely to Google Gemini. They are never stored on any public server.</span>
           </div>
           <form onSubmit={handleSubmit} className="relative max-w-4xl mx-auto shadow-sm rounded-xl border border-gray-300 bg-gray-50 focus-within:ring-2 focus-within:ring-blue-500 focus-within:border-transparent transition-all">
             {attachments.length > 0 && (
@@ -293,7 +322,7 @@ export default function App() {
                     handleSubmit(e);
                   }
                 }}
-                placeholder="Paste toxicology report text, or attach PDF/TXT files..."
+                placeholder="Paste toxicology report text, or attach large PDF files..."
                 className="w-full bg-transparent border-none focus:ring-0 resize-none min-h-[44px] max-h-[200px] py-3 px-2 text-gray-900 outline-none"
                 rows={1}
                 style={{ height: 'auto' }}
@@ -313,7 +342,7 @@ export default function App() {
             </div>
           </form>
           <p className="text-xs text-center text-gray-400 mt-3">
-            Press Enter to send, Shift + Enter for new line. Supports PDF, TXT, CSV.
+            Press Enter to send, Shift + Enter for new line. Supports large PDFs up to 2GB.
           </p>
         </div>
       </main>
