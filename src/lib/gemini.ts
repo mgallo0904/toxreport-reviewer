@@ -9,18 +9,29 @@ export const uploadFileToGemini = async (file: File, onStateChange?: (state: str
   const formData = new FormData();
   formData.append('file', file);
 
-  const uploadRes = await fetch('/api/upload', {
-    method: 'POST',
-    body: formData
-  });
+  try {
+    const uploadRes = await fetch('/api/upload', {
+      method: 'POST',
+      body: formData
+    });
 
-  if (!uploadRes.ok) {
-    const errData = await uploadRes.json().catch(() => ({}));
-    throw new Error(errData.error || `Failed to upload file: ${uploadRes.statusText}`);
+    if (!uploadRes.ok) {
+      let errText = await uploadRes.text();
+      try {
+        const errJson = JSON.parse(errText);
+        errText = errJson.error || errText;
+      } catch (e) {
+        // Ignore parse error
+      }
+      throw new Error(`Server error ${uploadRes.status}: ${errText}`);
+    }
+
+    const data = await uploadRes.json();
+    return data.file;
+  } catch (error) {
+    console.error("Upload failed:", error);
+    throw new Error(`Upload failed: ${error instanceof Error ? error.message : String(error)}`);
   }
-
-  const data = await uploadRes.json();
-  return data.file;
 };
 
 export const sendToxReviewMessage = async (history: any[]) => {

@@ -114,7 +114,9 @@ export default function App() {
       const updatedMessages = [...messages, newUserMessage];
       setMessages(updatedMessages);
 
-      const geminiHistory = updatedMessages.map(msg => {
+      const geminiHistory = updatedMessages
+        .filter(msg => msg.id !== '1') // Exclude the initial greeting
+        .map(msg => {
         const parts: any[] = [];
         if (msg.attachments) {
           msg.attachments.forEach(att => {

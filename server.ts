@@ -4,10 +4,14 @@ import path from "path";
 import multer from "multer";
 import { GoogleGenAI } from "@google/genai";
 import fs from "fs";
+import dotenv from "dotenv";
+
+dotenv.config();
 
 const upload = multer({ dest: 'uploads/' });
 
 async function startServer() {
+  console.log("STARTING SERVER. API KEY EXISTS:", !!process.env.GEMINI_API_KEY);
   const app = express();
   const PORT = 3000;
 
@@ -15,7 +19,8 @@ async function startServer() {
 
   // API routes FIRST
   app.get("/api/health", (req, res) => {
-    res.json({ status: "ok" });
+    console.log("Health check. API Key exists:", !!process.env.GEMINI_API_KEY);
+    res.json({ status: "ok", hasApiKey: !!process.env.GEMINI_API_KEY });
   });
 
   app.post("/api/upload", upload.single('file'), async (req, res) => {
@@ -32,11 +37,11 @@ async function startServer() {
       const ai = new GoogleGenAI({ apiKey });
 
       try {
+        const filePath = path.join(process.cwd(), req.file.path);
         // Upload to Gemini
         let uploadedFile = await ai.files.upload({
-          file: req.file.path,
+          file: filePath,
           mimeType: req.file.mimetype || 'application/pdf',
-          displayName: req.file.originalname,
         });
 
         // Wait for processing to complete
@@ -52,7 +57,8 @@ async function startServer() {
         res.json({ file: uploadedFile });
       } finally {
         // Clean up the local file
-        fs.unlink(req.file.path, (err) => {
+        const filePath = path.join(process.cwd(), req.file.path);
+        fs.unlink(filePath, (err) => {
           if (err) console.error("Error deleting local file:", err);
         });
       }
