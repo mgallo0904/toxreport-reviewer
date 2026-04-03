@@ -8,11 +8,15 @@ export const uploadFileToGemini = async (file: File, onStateChange?: (state: str
 
   const formData = new FormData();
   formData.append('file', file);
+  const controller = new AbortController();
+  const timeoutMs = 6 * 60 * 1000;
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
   try {
     const uploadRes = await fetch('/api/upload', {
       method: 'POST',
-      body: formData
+      body: formData,
+      signal: controller.signal
     });
 
     if (!uploadRes.ok) {
@@ -30,7 +34,12 @@ export const uploadFileToGemini = async (file: File, onStateChange?: (state: str
     return data.file;
   } catch (error) {
     console.error("Upload failed:", error);
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error(`Upload timed out after ${Math.floor(timeoutMs / 1000)} seconds. Please retry with a smaller file or check server health.`);
+    }
     throw new Error(`Upload failed: ${error instanceof Error ? error.message : String(error)}`);
+  } finally {
+    clearTimeout(timeout);
   }
 };
 

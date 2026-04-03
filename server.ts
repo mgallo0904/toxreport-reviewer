@@ -10,6 +10,9 @@ dotenv.config();
 
 const upload = multer({ dest: 'uploads/' });
 
+const FILE_PROCESSING_TIMEOUT_MS = 5 * 60 * 1000;
+const FILE_POLL_INTERVAL_MS = 2000;
+
 async function startServer() {
   console.log("STARTING SERVER. API KEY EXISTS:", !!process.env.GEMINI_API_KEY);
   const app = express();
@@ -41,17 +44,33 @@ async function startServer() {
         // Upload to Gemini
         let uploadedFile = await ai.files.upload({
           file: filePath,
-          mimeType: req.file.mimetype || 'application/pdf',
+          config: {
+            mimeType: req.file.mimetype || 'application/pdf',
+            displayName: req.file.originalname,
+          },
         });
 
         // Wait for processing to complete
+        const startTime = Date.now();
         while (uploadedFile.state === 'PROCESSING') {
-          await new Promise((resolve) => setTimeout(resolve, 2000));
+          if (Date.now() - startTime > FILE_PROCESSING_TIMEOUT_MS) {
+            return res.status(504).json({
+              error: `File processing timed out after ${Math.floor(FILE_PROCESSING_TIMEOUT_MS / 1000)} seconds for ${req.file.originalname}`,
+            });
+          }
+
+          await new Promise((resolve) => setTimeout(resolve, FILE_POLL_INTERVAL_MS));
           uploadedFile = await ai.files.get({ name: uploadedFile.name });
         }
 
         if (uploadedFile.state === 'FAILED') {
           return res.status(500).json({ error: `File processing failed for ${req.file.originalname}` });
+        }
+
+        if (uploadedFile.state !== 'ACTIVE') {
+          return res.status(500).json({
+            error: `Unexpected file state \"${uploadedFile.state}\" for ${req.file.originalname}`,
+          });
         }
 
         res.json({ file: uploadedFile });
