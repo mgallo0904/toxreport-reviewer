@@ -91,7 +91,8 @@ export default function App() {
     try {
       // Upload files using the Gemini File API (supports up to 2GB)
       const processedAttachments: MessageAttachment[] = [];
-      for (const att of currentAttachments) {
+      for (const [index, att] of currentAttachments.entries()) {
+        setLoadingText(`Uploading file ${index + 1} of ${currentAttachments.length}: ${att.name}...`);
         const uploaded = await uploadFileToGemini(att.file, (stateText) => {
           setLoadingText(stateText);
         });
